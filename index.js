@@ -1,5 +1,5 @@
 const express = require('express')
-
+const jwt = require('jsonwebtoken');
 const app = express();
 require('dotenv').config()
 const cors = require('cors');
@@ -35,6 +35,39 @@ const userCollection = client.db("BistroDB").collection("users");
 
 
 
+app.post('/jwt',async (req, res) => {
+
+  const user = req.body;
+  const token = jwt.sign(user,process.env.ACCESS_TOKEN,{expiresIn:'1h'});
+  res.send(token)
+})
+
+const verifyToken = (req,res,next)=>{
+  // console.log("inside VF",req.headers)
+  if (!req.headers.authorization) {
+    return res.status(401).send({message: 'Access Denied'})
+  }
+  const token = req.headers.authorization.split(' ')[1]
+  jwt.verify(token,process.env.ACCESS_TOKEN,(err,decoded)=>{
+    if (err) {
+      return res.status(401).send({message: 'Access Denied'})
+    }
+    req.decoded = decoded;
+    next();
+  })
+}
+const verifyAdmin =async (req,res,next)=>{
+const email= req.decoded.email;
+const query = {email: email};
+const user = await userCollection.findOne(query);
+const isAdmin = user?.role ==='admin';
+if (!isAdmin) {
+  return res.status(401).send({message: 'forbidden access'})
+}
+next();
+}
+
+
 app.post('/users',async (req, res) => {
   const user = req.body;
   const query = {email:user.email}
@@ -45,17 +78,42 @@ app.post('/users',async (req, res) => {
   const result =await userCollection.insertOne(user);
   res.send(result)
 })
-app.get('/users',async (req, res) => {
+app.get('/users',verifyToken,verifyAdmin,async (req, res) => {
+  
   const result = await userCollection.find().toArray();
   res.send(result)
 })
-app.delete('/users/:id',async (req,res)=>{
+app.delete('/users/:id',verifyToken,verifyAdmin,async (req,res)=>{
   const id= req.params.id;
   const query ={_id: new ObjectId(id)}
   const result =  await userCollection.deleteOne(query);
   res.send(result)
 })
+app.patch('/users/admin/:id',verifyToken,verifyAdmin,async (req, res) => {
 
+  const id = req.params.id;
+  const filter = {_id: new ObjectId(id)}
+  const updatedDoc = {
+    $set:{
+      role:'admin'
+    }
+  }
+  const result =  await userCollection.updateOne(filter,updatedDoc);
+  res.send(result)
+})
+app.get('/users/admin/:email',verifyToken,async (req,res) => {
+  const email = req.params.email;
+  if (email!==req.decoded.email){
+    return res.status(403).send({message:'Unauthenticated access'})
+  }
+  const query ={email:email}
+  const user = await userCollection.findOne(query)
+  let admin = false;
+  if (user) {
+    admin=user?.role==='admin';
+  }
+  res.send({admin})
+})
 
 
 app.get('/carts',async (req,res) => {
